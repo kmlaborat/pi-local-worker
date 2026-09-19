@@ -1,3 +1,33 @@
+# Dependencies — recreated by `npm install`. Never committed.
 node_modules/
+
+# Build output. tsconfig sets noEmit, so nothing is produced today; ignored so a
+# stray `tsc` run cannot commit compiled duplicates of src/.
 dist/
+
+# Logs, including npm's failure logs written to the package root.
 *.log
+
+# Coverage output — the default vitest --coverage report directory.
+coverage/
+
+# TypeScript incremental build info. Not produced under noEmit; ignored defensively.
+*.tsbuildinfo
+
+# Local environment overrides. The extension reads PI_WORKER_* from the ambient
+# environment only and never loads a .env file, so none is needed here. Ignored so a
+# local one cannot be committed by accident. A committed sample would be named
+# .env.example and force-included below.
+.env
+.env.*
+!.env.example
+
+# OS metadata.
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor and workspace metadata.
+.vscode/
+.idea/
+*.swp
