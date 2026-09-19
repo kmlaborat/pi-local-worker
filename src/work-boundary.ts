@@ -1,8 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import type { TaskSpec } from "./task-spec.ts";
-
-export type WorkType = TaskSpec["workType"];
+// `WorkType`, `READ_ONLY_WORK_TYPES` and `isReadOnlyWorkType` are defined once,
+// in task-spec.ts, and imported here rather than re-declared. This Step 3
+// enforcement layer and the Step 8 verifier both classify work types by the same
+// rule through different mechanisms, so they read the same list. Consumers import
+// those names from task-spec.ts directly; this module deliberately does not
+// re-export them, so there is exactly one place to import each from.
+import { isReadOnlyWorkType, type WorkType } from "./task-spec.ts";
 
 /**
  * Built-in pi 0.85.1 tools whose purpose is to modify the workspace.
@@ -20,13 +24,6 @@ export const BUILTIN_WRITE_CAPABLE_TOOLS: readonly string[] = ["write", "edit", 
 
 /** Built-in pi tools that cannot modify the workspace. */
 export const BUILTIN_READ_ONLY_TOOLS: readonly string[] = ["read", "grep", "find", "ls"];
-
-/** Work types treated as read-only: the Worker must not modify the workspace. */
-export const READ_ONLY_WORK_TYPES: readonly WorkType[] = ["investigate", "review", "verify"];
-
-export function isReadOnlyWorkType(workType: WorkType): boolean {
-	return READ_ONLY_WORK_TYPES.includes(workType);
-}
 
 export interface ToolPolicyDecision {
 	allowed: boolean;

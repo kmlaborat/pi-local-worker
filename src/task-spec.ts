@@ -25,7 +25,12 @@ export const TaskSpecSchema = Type.Object({
 		description: "Files, directories, symbols or areas the Worker may inspect or modify.",
 	}),
 
-	/** SPEC 6.5 - kind of work. Drives nothing yet; descriptive in v0. */
+	/**
+	 * SPEC 6.5 - kind of work.
+	 *
+	 * Not merely descriptive: `workType` drives the Step 3 tool boundary and the
+	 * Step 8 implicit `no-changes` invariant. See READ_ONLY_WORK_TYPES below.
+	 */
 	workType: Type.Union(
 		[
 			Type.Literal("investigate"),
@@ -46,7 +51,13 @@ export const TaskSpecSchema = Type.Object({
 	/**
 	 * Machine-checkable completion requirements (Step 8).
 	 *
-	 * This is the authoritative input to deterministic verification.
+	 * This is the authoritative input to deterministic verification, and the
+	 * only one. It supersedes the SPEC v0.1 §6.7 `validation` field, which
+	 * described the same thing in prose and was never wired to the verifier: a
+	 * task listing `validation: ["npm test"]` ran no check and reported
+	 * `unverifiable`, silently. Express the same intent as
+	 * `{ kind: "command", argv: ["npm", "test"] }` here instead.
+	 *
 	 * `completionCriteria` stays as human-readable context and is explicitly NOT
 	 * interpreted: a task with only prose criteria verifies as `unverifiable`,
 	 * never as satisfied.
@@ -67,9 +78,6 @@ export const TaskSpecSchema = Type.Object({
 	/** SPEC 6.6 - required testing approach, when applicable. */
 	testRequirements: Type.Optional(Type.String({ description: "Required testing approach (e.g. TDD)." })),
 
-	/** SPEC 6.7 - how completion is verified (commands, checks). */
-	validation: Type.Optional(Type.Array(Type.String({ description: "e.g. `npm test`, `npm run typecheck`." }))),
-
 	/** SPEC 6.8 - restrictions on the implementation. */
 	implementationConstraints: Type.Optional(Type.Array(Type.String())),
 
@@ -81,6 +89,36 @@ export const TaskSpecSchema = Type.Object({
 });
 
 export type TaskSpec = Static<typeof TaskSpecSchema>;
+
+/**
+ * The closed set of work kinds a TaskSpec may declare (SPEC v0.1 §6.5).
+ *
+ * Derived from the schema rather than written out again, so the type and the wire
+ * format cannot drift. Declared here rather than in the enforcement layer because
+ * `workType` is a TaskSpec field: every consumer that reasons about it sits
+ * above this module, and putting the type anywhere higher would force this module
+ * to depend upward.
+ */
+export type WorkType = TaskSpec["workType"];
+
+/**
+ * Work types that must not modify the workspace.
+ *
+ * SINGLE SOURCE OF TRUTH. Both the Step 3 work boundary, which blocks
+ * write-capable tools before they execute, and the Step 8 completion verifier,
+ * which applies an implicit `no-changes` invariant, read this one list.
+ *
+ * They are deliberately not each given their own copy. The two layers classify the
+ * same run the same way through different mechanisms, and a drift between them
+ * would let a task be enforced as read-only while being verified as writable, or
+ * the reverse. The two are pinned together by a test rather than by convention.
+ */
+export const READ_ONLY_WORK_TYPES: readonly WorkType[] = ["investigate", "review", "verify"];
+
+/** True when `workType` must leave the workspace unmodified. */
+export function isReadOnlyWorkType(workType: WorkType): boolean {
+	return READ_ONLY_WORK_TYPES.includes(workType);
+}
 
 /**
  * Render the TaskSpec into the single user message that starts the Worker.
@@ -119,12 +157,6 @@ export function renderTaskSpecPrompt(spec: TaskSpec): string {
 		lines.push("");
 		lines.push("## Test / TDD Requirements");
 		lines.push(spec.testRequirements);
-	}
-
-	if (spec.validation && spec.validation.length > 0) {
-		lines.push("");
-		lines.push("## Validation");
-		lines.push(...bulletList(spec.validation));
 	}
 
 	if (spec.implementationConstraints && spec.implementationConstraints.length > 0) {

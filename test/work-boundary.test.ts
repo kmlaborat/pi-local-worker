@@ -1,15 +1,19 @@
 import { createCodingTools, createPowerShellTool, createReadOnlyTools } from "@earendil-works/pi-coding-agent";
 import { describe, expect, test } from "vitest";
 
-import type { TaskSpec } from "../src/task-spec.ts";
+import {
+	isReadOnlyWorkType,
+	READ_ONLY_WORK_TYPES,
+	type TaskSpec,
+	type WorkType,
+} from "../src/task-spec.ts";
+import { deriveRequirements } from "../src/completion-verifier.ts";
 import {
 	BUILTIN_READ_ONLY_TOOLS,
 	BUILTIN_WRITE_CAPABLE_TOOLS,
 	BoundaryRecorder,
 	createWorkBoundaryExtension,
 	evaluateToolPolicy,
-	isReadOnlyWorkType,
-	type WorkType,
 } from "../src/work-boundary.ts";
 import { WorkerHarness } from "../src/worker-harness.ts";
 import { FakeWorkerSession, toolCallHandlerFromBoundaryExtension } from "./helpers/fake-session.ts";
@@ -230,5 +234,80 @@ describe("work boundary — enforced through the harness", () => {
 		expect(fake.emittedEvents.filter((e) => e === "tool_execution_start")).toHaveLength(1);
 		expect(fake.emittedEvents.filter((e) => e === "tool_execution_end")).toHaveLength(1);
 		expect(fake.state.pendingToolCalls.size).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Single-source guarantee (audit fix A-1).
+//
+// The Step 3 work boundary and the Step 8 completion verifier classify work
+// types by the same rule through different mechanisms: the boundary blocks
+// write-capable tools before they run, the verifier applies an implicit
+// `no-changes` invariant. These tests pin the two to the same list so a future
+// edit to one cannot silently diverge from the other.
+// ---------------------------------------------------------------------------
+describe("single source: work boundary and completion verifier agree", () => {
+	const ALL_WORK_TYPES: WorkType[] = [
+		"investigate",
+		"review",
+		"test",
+		"implement",
+		"refactor",
+		"verify",
+	];
+
+	test("READ_ONLY_WORK_TYPES is the only read-only list, and it is typed as WorkType[]", () => {
+		// Typed, not `string[]`: a loose list would let a non-work-type slip in
+		// and silently never match.
+		const list: readonly WorkType[] = READ_ONLY_WORK_TYPES;
+		expect([...list]).toEqual(["investigate", "review", "verify"]);
+		// Every member is a real work type declared by the schema.
+		for (const wt of READ_ONLY_WORK_TYPES) {
+			expect(ALL_WORK_TYPES).toContain(wt);
+		}
+	});
+
+	test("isReadOnlyWorkType partitions exactly READ_ONLY_WORK_TYPES", () => {
+		const readOnly = ALL_WORK_TYPES.filter(isReadOnlyWorkType);
+		expect(readOnly).toEqual([...READ_ONLY_WORK_TYPES]);
+	});
+
+	test("the boundary blocks write-capable tools for exactly the read-only set", () => {
+		for (const workType of ALL_WORK_TYPES) {
+			const blocksAnything = BUILTIN_WRITE_CAPABLE_TOOLS.some(
+				(tool) => !evaluateToolPolicy(workType, tool).allowed,
+			);
+			expect(blocksAnything).toBe(isReadOnlyWorkType(workType));
+		}
+	});
+
+	test("the verifier applies the implicit no-changes invariant for exactly the read-only set", () => {
+		for (const workType of ALL_WORK_TYPES) {
+			const { requirements } = deriveRequirements({ workType });
+			const hasImplicitNoChanges = requirements.some((r) => r.kind === "no-changes");
+			expect(hasImplicitNoChanges).toBe(isReadOnlyWorkType(workType));
+		}
+	});
+
+	test("both layers classify every work type identically", () => {
+		// The direct cross-check: for each work type, "the boundary would block a
+		// write tool" must equal "the verifier expects no changes".
+		for (const workType of ALL_WORK_TYPES) {
+			const boundarySaysReadOnly = !evaluateToolPolicy(workType, "write").allowed;
+			const verifierSaysReadOnly = deriveRequirements({ workType }).requirements.some(
+				(r) => r.kind === "no-changes",
+			);
+			expect(boundarySaysReadOnly).toBe(verifierSaysReadOnly);
+		}
+	});
+
+	test("completion-verifier.ts declares no read-only list of its own", async () => {
+		// Structural proof of the single source: the verifier module must not
+		// contain its own READ_ONLY_WORK_TYPES definition.
+		const source = await import("node:fs").then((fs) =>
+			fs.readFileSync(new URL("../src/completion-verifier.ts", import.meta.url), "utf8"),
+		);
+		const definitions = source.match(/(const|let|var)\s+READ_ONLY_WORK_TYPES\s*:/g) ?? [];
+		expect(definitions).toEqual([]);
 	});
 });

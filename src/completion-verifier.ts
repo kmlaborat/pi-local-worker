@@ -21,8 +21,10 @@ import {
  * stays unknown instead of becoming a guess.
  */
 
-/** Work types whose default deterministic invariant is "no Worker-induced changes". */
-const READ_ONLY_WORK_TYPES: readonly string[] = ["investigate", "review", "verify"];
+// Work types whose default deterministic invariant is "no Worker-induced
+// changes". Imported from task-spec.ts rather than restated here: this is the same
+// classification the Step 3 work boundary enforces, and the two must not drift.
+import { isReadOnlyWorkType, type WorkType } from "./task-spec.ts";
 
 /** Requirement kinds that depend on workspace evidence. */
 const WORKSPACE_KINDS = new Set(["changed-files", "forbidden-files", "no-changes"]);
@@ -49,7 +51,7 @@ export interface WorkspaceEvidenceView {
  * persistent change, and inferring otherwise would be inventing semantics.
  */
 export function deriveRequirements(spec: {
-	workType: string;
+	workType: WorkType;
 	completionChecks?: readonly VerificationRequirement[];
 	completionCriteria?: readonly string[];
 }): { requirements: VerificationRequirement[]; notes: string[] } {
@@ -60,7 +62,7 @@ export function deriveRequirements(spec: {
 		WORKSPACE_KINDS.has((r as { kind?: string })?.kind ?? ""),
 	);
 
-	if (!hasExplicitWorkspaceCheck && READ_ONLY_WORK_TYPES.includes(spec.workType)) {
+	if (!hasExplicitWorkspaceCheck && isReadOnlyWorkType(spec.workType)) {
 		requirements.unshift({
 			id: "worktype-default:no-changes",
 			kind: "no-changes",
@@ -334,12 +336,21 @@ function runCommandCheck(
 	const stdout = truncate(result.stdout, maxOut);
 	const stderr = truncate(result.stderr, maxOut);
 
+	// The truncation facts travel with the text on every return path below, so a
+	// reader can always tell a short stream from a cut one.
+	const output = {
+		stdout: stdout.text,
+		stderr: stderr.text,
+		stdoutTruncated: stdout.truncated,
+		stderrTruncated: stderr.truncated,
+		outputByteLimit: maxOut,
+	};
+
 	if (result.timedOut) {
 		return {
 			...base,
+			...output,
 			timedOut: true,
-			stdout: stdout.text,
-			stderr: stderr.text,
 			state: "unverifiable",
 			reason: `Command timed out after ${timeoutMs}ms. No exit code was observed.`,
 		};
@@ -348,8 +359,7 @@ function runCommandCheck(
 	if (!result.started) {
 		return {
 			...base,
-			stdout: stdout.text,
-			stderr: stderr.text,
+			...output,
 			state: "unverifiable",
 			reason: `Command could not be executed: ${stderr.text || "unknown reason"}`,
 		};
@@ -359,8 +369,7 @@ function runCommandCheck(
 	if (exitCode === null) {
 		return {
 			...base,
-			stdout: stdout.text,
-			stderr: stderr.text,
+			...output,
 			state: "unverifiable",
 			reason: "Command produced no exit code.",
 		};
@@ -368,9 +377,8 @@ function runCommandCheck(
 
 	return {
 		...base,
+		...output,
 		exitCode,
-		stdout: stdout.text,
-		stderr: stderr.text,
 		state: exitCode === 0 ? "satisfied" : "unsatisfied",
 		reason:
 			exitCode === 0

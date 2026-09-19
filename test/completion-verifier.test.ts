@@ -9,9 +9,12 @@ import {
 	verifyRequirements,
 	type VerifyOptions,
 } from "../src/completion-verifier.ts";
+import type { WorkType } from "../src/task-spec.ts";
 import {
 	aggregateStates,
+	DEFAULT_MAX_COMMAND_OUTPUT_BYTES,
 	spawnCommandRunner,
+	type CommandVerification,
 	type VerificationRequirement,
 	type VerificationState,
 } from "../src/verification.ts";
@@ -296,6 +299,123 @@ describe("L/M/N/O — validation commands", () => {
 			rmSync(marker, { force: true });
 		}
 	});
+});
+
+// ---------------------------------------------------------------------------
+// Output truncation is recorded, not silently dropped (audit fix W-1).
+//
+// The cap itself is not new. What was missing is the record that it was applied:
+// a truncated stream used to be indistinguishable from a short one. These tests
+// pin the structural fields.
+// ---------------------------------------------------------------------------
+describe("command output truncation is structural", () => {
+	function verifyWithOutput(
+		stdout: string,
+		stderr: string,
+		maxOutputBytes?: number,
+	): CommandVerification {
+		const fake = createFakeCommandRunner([
+			{ argv: ["noisy"], result: { exitCode: 0, stdout, stderr } },
+		]);
+		const e = verifyRequirements({
+			requirements: [{ id: "v", kind: "command", argv: ["noisy"] }],
+			workspaceEvidence: evidenceWith([]),
+			runner: fake.runner,
+			cwd: process.cwd(),
+			commandTimeoutMs: 1_000,
+			...(maxOutputBytes === undefined ? {} : { maxOutputBytes }),
+		});
+		return e.validation[0]!;
+	}
+
+	test("an uncapped stream reports truncated: false on both streams", () => {
+		const v = verifyWithOutput("short out", "short err", 1_024);
+		expect(v.stdout).toBe("short out");
+		expect(v.stderr).toBe("short err");
+		expect(v.stdoutTruncated).toBe(false);
+		expect(v.stderrTruncated).toBe(false);
+		expect(v.outputByteLimit).toBe(1_024);
+	});
+
+	test("an over-limit stdout is cut and flagged", () => {
+		const big = "x".repeat(5_000);
+		const v = verifyWithOutput(big, "", 100);
+		expect(v.stdout).toHaveLength(100);
+		expect(v.stdoutTruncated).toBe(true);
+		expect(v.stderrTruncated).toBe(false);
+		expect(v.outputByteLimit).toBe(100);
+		// The cap holds: nothing beyond the limit is retained.
+		expect(Buffer.byteLength(v.stdout ?? "", "utf8")).toBeLessThanOrEqual(100);
+	});
+
+	test("an over-limit stderr is cut and flagged independently", () => {
+		const v = verifyWithOutput("ok", "e".repeat(5_000), 200);
+		expect(v.stdout).toBe("ok");
+		expect(v.stdoutTruncated).toBe(false);
+		expect(v.stderr).toHaveLength(200);
+		expect(v.stderrTruncated).toBe(true);
+	});
+
+	test("both streams can be truncated at once", () => {
+		const v = verifyWithOutput("a".repeat(999), "b".repeat(999), 64);
+		expect(v.stdoutTruncated).toBe(true);
+		expect(v.stderrTruncated).toBe(true);
+	});
+
+	test("the default cap is applied when no override is given", () => {
+		const v = verifyWithOutput("z".repeat(64 * 1024), "");
+		expect(v.outputByteLimit).toBe(DEFAULT_MAX_COMMAND_OUTPUT_BYTES);
+		expect(v.stdoutTruncated).toBe(true);
+		expect(v.stdout).toHaveLength(DEFAULT_MAX_COMMAND_OUTPUT_BYTES);
+	});
+
+	test("truncation does not change the verification state", () => {
+		// The cap is about evidence size, not about the outcome. A command that
+		// exits 0 stays satisfied no matter how much it printed.
+		const ok = verifyWithOutput("k".repeat(10_000), "");
+		expect(ok.state).toBe("satisfied");
+		expect(ok.exitCode).toBe(0);
+	});
+
+	test("truncation is recorded on the timeout path too", () => {
+		const fake = createFakeCommandRunner([
+			{
+				argv: ["noisy-timeout"],
+				result: { exitCode: null, timedOut: true, stderr: "t".repeat(5_000) },
+			},
+		]);
+		const e = verifyRequirements({
+			requirements: [{ id: "v", kind: "command", argv: ["noisy-timeout"] }],
+			workspaceEvidence: evidenceWith([]),
+			runner: fake.runner,
+			cwd: process.cwd(),
+			commandTimeoutMs: 100,
+			maxOutputBytes: 128,
+		});
+		const v = e.validation[0]!;
+		expect(v.timedOut).toBe(true);
+		expect(v.state).toBe("unverifiable");
+		expect(v.stderrTruncated).toBe(true);
+		expect(v.outputByteLimit).toBe(128);
+	});
+
+	test("truncation is recorded on the cannot-launch path too", () => {
+		const fake = createFakeCommandRunner([]);
+		const e = verifyRequirements({
+			requirements: [{ id: "v", kind: "command", argv: ["missing-binary"] }],
+			workspaceEvidence: evidenceWith([]),
+			runner: fake.runner,
+			cwd: process.cwd(),
+			commandTimeoutMs: 100,
+			maxOutputBytes: 64,
+		});
+		const v = e.validation[0]!;
+		expect(v.state).toBe("unverifiable");
+		// The fake reports no output, so nothing was truncated - but the limit is
+		// still recorded, so the reader knows what cap was in force.
+		expect(v.outputByteLimit).toBe(64);
+		expect(v.stdoutTruncated).toBe(false);
+	});
 
 	test("test kind behaves identically to command", () => {
 		const a = verify([{ id: "t", kind: "test", argv: ["npm", "test"] }], []);
@@ -396,7 +516,7 @@ describe("V/W — invalid requirements", () => {
 
 describe("Work-type defaults", () => {
 	test("read-only work types get an implicit no-changes invariant", () => {
-		for (const workType of ["investigate", "review", "verify"]) {
+		for (const workType of ["investigate", "review", "verify"] as WorkType[]) {
 			const { requirements, notes } = deriveRequirements({ workType });
 			expect(requirements.map((r) => r.kind)).toContain("no-changes");
 			expect(notes.join(" ")).toContain("implicit no-changes");
@@ -404,7 +524,7 @@ describe("Work-type defaults", () => {
 	});
 
 	test("write work types get no default invariant", () => {
-		for (const workType of ["implement", "refactor", "test"]) {
+		for (const workType of ["implement", "refactor", "test"] as WorkType[]) {
 			const { requirements } = deriveRequirements({ workType });
 			expect(requirements).toEqual([]);
 		}

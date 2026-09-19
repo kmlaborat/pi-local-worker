@@ -32,12 +32,21 @@ describe("TaskSpec schema", () => {
 		expect(Value.Check(TaskSpecSchema, minimalSpec({ workType: "yolo" as TaskSpec["workType"] }))).toBe(false);
 	});
 
+	test("has no `validation` field: SPEC 6.7 is expressed via completionChecks", () => {
+		// The prose `validation` field was removed. It described the same thing
+		// `completionChecks` now expresses machine-checkably, and was never wired
+		// to the verifier. Pinning its absence here so it cannot come back as a
+		// second, inert way to say the same thing.
+		expect(Object.keys(TaskSpecSchema.properties)).not.toContain("validation");
+		const spec = minimalSpec();
+		expect("validation" in spec).toBe(false);
+	});
+
 	test("accepts every optional SPEC 6 field", () => {
 		const spec = minimalSpec({
 			relevantSpec: "docs/SPEC_v0.1.md §6",
 			preconditions: ["deps installed"],
 			testRequirements: "TDD required",
-			validation: ["npm test", "npm run typecheck"],
 			implementationConstraints: ["no new deps"],
 			forbiddenChanges: ["do not touch package.json"],
 			expectedReport: ["summary + changed files"],
@@ -64,7 +73,6 @@ describe("renderTaskSpecPrompt", () => {
 				relevantSpec: "RELEVANT_SPEC_MARKER",
 				preconditions: ["PRECONDITION_MARKER"],
 				testRequirements: "TEST_REQ_MARKER",
-				validation: ["VALIDATION_MARKER"],
 				implementationConstraints: ["IMPL_CONSTRAINT_MARKER"],
 				forbiddenChanges: ["FORBIDDEN_MARKER"],
 				expectedReport: ["EXPECTED_REPORT_MARKER"],
@@ -75,7 +83,6 @@ describe("renderTaskSpecPrompt", () => {
 			"RELEVANT_SPEC_MARKER",
 			"PRECONDITION_MARKER",
 			"TEST_REQ_MARKER",
-			"VALIDATION_MARKER",
 			"IMPL_CONSTRAINT_MARKER",
 			"FORBIDDEN_MARKER",
 			"EXPECTED_REPORT_MARKER",

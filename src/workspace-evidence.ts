@@ -241,13 +241,6 @@ function wasDirty(identity: { tracked: boolean; status?: string }): boolean {
 /**
  * Identity equality.
  *
- * Two identities are equal when they describe the same bytes. Where both sides
- * carry a content hash, the hash decides. Where both are index-blob identities,
- * the blob oid decides. Mixed kinds fall back to size, and a `size-only` side is
- * treated as *not provably equal* unless the size matches — with the weakness
- * recorded in the evidence limitations.
- */
-/**
  * Two identities are equal when they describe the same bytes.
  *
  * Where either side carries a Git-comparable oid (a locally computed blob oid or
@@ -269,7 +262,14 @@ function identityEquals(a: FileIdentity, b: FileIdentity): boolean {
 	return a.size === b.size;
 }
 
-/** True when a snapshot contains any Git-visible difference from a clean tree. */
+/**
+ * Summarize the workspace state as it stood at baseline.
+ *
+ * Splits the snapshot's paths into those that were already dirty (tracked and
+ * differing from HEAD/index) and those that were already untracked, so the final
+ * comparison can tell Worker-induced changes apart from pre-existing ones. The
+ * listed paths are capped, with overflow reported by `listTruncated`.
+ */
 function summarizeBaseline(
 	baseline: GitSnapshot,
 	maxListedPaths: number,

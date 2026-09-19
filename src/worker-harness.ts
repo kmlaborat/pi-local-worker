@@ -13,7 +13,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { GitObserver, type GitRunner, type GitSnapshot } from "./git-observer.ts";
-import { renderTaskSpecPrompt, type TaskSpec } from "./task-spec.ts";
+import {
+	isReadOnlyWorkType,
+	renderTaskSpecPrompt,
+	type TaskSpec,
+	type WorkType,
+} from "./task-spec.ts";
 import { deriveRequirements, verifyRequirements } from "./completion-verifier.ts";
 import {
 	DEFAULT_GATE_POLICY,
@@ -32,9 +37,7 @@ import { collectWorkspaceEvidence, type WorkspaceEvidence } from "./workspace-ev
 import {
 	BoundaryRecorder,
 	createWorkBoundaryExtension,
-	isReadOnlyWorkType,
 	type BoundaryViolation,
-	type WorkType,
 } from "./work-boundary.ts";
 import {
 	lastAssistantStopReason,

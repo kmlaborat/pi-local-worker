@@ -116,7 +116,15 @@ export interface VerificationCheck {
 	reason?: string;
 }
 
-/** Outcome of one validation command execution. */
+/**
+ * Outcome of one validation command execution.
+ *
+ * `stdout` / `stderr` are capped. The cap is a fact about the evidence, not a
+ * detail of how it was produced, so it is recorded rather than dropped: a
+ * consumer must be able to tell "the command printed nothing" from "the command
+ * printed a great deal and only the head was kept". Same shape of guarantee as
+ * `PatchEvidence.truncated`.
+ */
 export interface CommandVerification {
 	commandId: string;
 	argv: readonly string[];
@@ -125,6 +133,12 @@ export interface CommandVerification {
 	timedOut: boolean;
 	stdout?: string;
 	stderr?: string;
+	/** True when `stdout` was cut at `outputByteLimit`. */
+	stdoutTruncated?: boolean;
+	/** True when `stderr` was cut at `outputByteLimit`. */
+	stderrTruncated?: boolean;
+	/** Per-stream byte cap that was applied. */
+	outputByteLimit?: number;
 	state: VerificationState;
 	reason?: string;
 }
@@ -187,7 +201,13 @@ export interface CommandRunner {
 	run(argv: readonly string[], options: CommandRunOptions): CommandRunResult;
 }
 
-/** Cap on retained command output; truncation is reported structurally. */
+/**
+ * Per-stream cap on retained command output.
+ *
+ * Truncation is reported structurally: `CommandVerification` carries
+ * `stdoutTruncated`, `stderrTruncated` and the `outputByteLimit` that was
+ * applied, so a truncated stream is distinguishable from a short one.
+ */
 export const DEFAULT_MAX_COMMAND_OUTPUT_BYTES = 32 * 1024;
 
 /**
