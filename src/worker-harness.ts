@@ -12,6 +12,8 @@ import {
 	type CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
 
+
+
 import { GitObserver, type GitRunner, type GitSnapshot } from "./git-observer.ts";
 import {
 	isReadOnlyWorkType,
@@ -82,10 +84,35 @@ export interface WorkerHarnessConfig {
 	cwd: string;
 	/** pi config directory. Defaults to `getAgentDir()`. */
 	agentDir?: string;
-	/** Provider id for the Worker model. Omit -> pi settings default. */
+	/**
+	 * Worker provider.
+	 *
+	 * The shipped extension always populates this from
+	 * `~/.pi/agent/pi-local-worker-config.json` before constructing the
+	 * harness, so the file is the source of truth in normal operation. Setting
+	 * it directly is the programmatic seam used by tests and by embedders that
+	 * must pin a model without writing a file.
+	 *
+	 * When `provider` and `modelId` are both absent the Worker runs on pi's own
+	 * settings default. The extension never reaches that state: it refuses the
+	 * call earlier when the configuration file is missing or invalid.
+	 */
 	provider?: string;
-	/** Model id for the Worker model. Omit -> pi settings default. */
+	/** Worker model id. See `provider`. */
 	modelId?: string;
+	/**
+	 * A configuration failure to report on every call instead of running.
+	 *
+	 * Set by the extension entrypoint when
+	 * `~/.pi/agent/pi-local-worker-config.json` is missing or invalid. The
+	 * harness returns the message as an error result without creating a Worker
+	 * session, so a misconfigured Worker cannot run on some other model and look
+	 * like it ran on the intended one.
+	 *
+	 * Carrying the failure through the harness rather than short-circuiting in the
+	 * tool keeps the result shape assembled in one place.
+	 */
+	configurationError?: string;
 	/** Thinking level. Omit -> pi settings default. */
 	thinkingLevel?: WorkerThinkingLevel;
 	/**
@@ -318,6 +345,43 @@ export interface WorkerResult {
 	 * deliberately: it would make the result unserialisable.
 	 */
 	orchestration?: OrchestrationDecision;
+	/**
+	 * Which model invoked this Worker — the Architect session's provider and model
+	 * as they stood at the moment of the `worker_run` call.
+	 *
+	 * Provenance only. It is recorded, never acted on: it does not select the
+	 * Worker model, does not constrain the Worker, and is not compared against it.
+	 * It is read fresh on every invocation and never cached, so a caller that
+	 * switches Architect models between calls sees the value that was actually
+	 * in effect for each call.
+	 *
+	 * Absent when the caller supplied no parent context, which is the case for a
+	 * harness driven outside a pi session (tests, direct programmatic use).
+	 */
+	parent?: ModelProvenance;
+	/**
+	 * Which model the Worker actually ran on, as resolved from configuration.
+	 *
+	 * Distinct from `parent` by construction: `parent` is who asked, `worker` is
+	 * what did the work. The two are independent and may name the same provider
+	 * while naming different models, which is the normal production arrangement.
+	 *
+	 * Absent when no Worker model could be resolved — in that case no session was
+	 * created and `status` is `error`.
+	 */
+	worker?: ModelProvenance;
+}
+
+/**
+ * A model identity recorded for provenance.
+ *
+ * `provider` and `model` mirror the two coordinates pi uses to address a model
+ * (`ModelRuntime.getModel(provider, id)`), so a recorded value can be looked up
+ * again without translation.
+ */
+export interface ModelProvenance {
+	provider: string;
+	model: string;
 }
 
 /**
@@ -360,6 +424,26 @@ export class WorkerModelResolutionError extends Error {
 	}
 }
 
+/**
+ * The Worker model could not be resolved from configuration.
+ *
+ * Distinct from `WorkerModelResolutionError`, which means the coordinates were
+ * known but the catalog has no such model. This one means the coordinates were
+ * never supplied: no configuration file, an unreadable one, or one missing a
+ * required field.
+ *
+ * Either way the Worker session is never created. A misconfigured Worker must not
+ * quietly fall back to the Architect's model or to a pi default, because the
+ * result would then look like a run happened on the intended model when it did
+ * not.
+ */
+export class WorkerConfigError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "WorkerConfigError";
+	}
+}
+
 /** Live view of the currently running Worker. Internal: no Architect-facing poll API yet. */
 export interface ActiveWorkerView {
 	taskId: string;
@@ -399,6 +483,16 @@ export class WorkerHarness {
 	private activeArbiter: TerminalArbiter | undefined;
 	private activeTimeoutGuard: WorkerTimeoutGuard | undefined;
 	private activeTimeoutInfo: WorkerTimeoutInfo | undefined;
+	/**
+	 * Who invoked the current run, captured at call time by `run()`.
+	 *
+	 * Held on the instance rather than threaded through every result-building
+	 * path because the N=1 invariant guarantees exactly one run is in flight,
+	 * which is the same reason `activeTracker` and `activeArbiter` live here.
+	 */
+	private activeParentProvenance: ModelProvenance | undefined;
+	/** The model the current run resolved to, set during session-option build. */
+	private activeWorkerProvenance: ModelProvenance | undefined;
 
 	public constructor(private readonly config: WorkerHarnessConfig) {}
 
@@ -473,7 +567,26 @@ export class WorkerHarness {
 	 * Never throws for expected failures: everything comes back as a
 	 * `WorkerResult` so the Architect session cannot be crashed by a Worker.
 	 */
-	public async run(spec: TaskSpec, signal?: AbortSignal): Promise<WorkerResult> {
+	/**
+	 * @param parent Provenance of the caller — the invoking Architect session's
+	 * provider and model, read by the caller at the moment of this call.
+	 *
+	 * Recorded on the result and nothing else. It never influences which model
+	 * the Worker runs on: that is decided by configuration alone. Passing it is
+	 * optional; a harness driven outside a pi session has no parent to report.
+	 */
+	public async run(
+		spec: TaskSpec,
+		signal?: AbortSignal,
+		parent?: ModelProvenance,
+	): Promise<WorkerResult> {
+		// A configuration failure is reported on every call and no session is
+		// ever created. The message comes from the loader and names the file that
+		// was consulted.
+		if (this.config.configurationError) {
+			return this.plainResult(spec, "error", "", { error: this.config.configurationError });
+		}
+
 		if (this.activeTaskId !== null) {
 			return this.plainResult(spec, "error", "", {
 				error:
@@ -485,9 +598,17 @@ export class WorkerHarness {
 		this.activeTaskId = spec.taskId;
 		this.activeWorkType = spec.workType;
 		this.activeStallEvents = [];
+		this.activeParentProvenance = parent ? { ...parent } : undefined;
+		this.activeWorkerProvenance = undefined;
 		try {
 			return await this.runExclusive(spec, signal);
 		} catch (error) {
+			// A configuration failure is reported as itself, with the file-level
+			// reason the loader produced. It is not an "unexpected" failure, and
+			// no Worker session was created: the run never started.
+			if (error instanceof WorkerConfigError) {
+				return this.plainResult(spec, "error", "", { error: error.message });
+			}
 			return this.plainResult(spec, "error", "", {
 				error: `Unexpected Worker failure: ${errorMessage(error)}`,
 			});
@@ -496,6 +617,8 @@ export class WorkerHarness {
 			this.activeTracker = undefined;
 			this.activeRecorder = undefined;
 			this.activeStallEvents = [];
+			this.activeParentProvenance = undefined;
+			this.activeWorkerProvenance = undefined;
 		}
 	}
 
@@ -877,6 +1000,7 @@ export class WorkerHarness {
 			steering: this.buildSteeringInfo(),
 			timeout: timeoutInfo,
 			...(workspaceEvidence ? { workspaceEvidence } : {}),
+			...this.provenanceFields(),
 		};
 	}
 
@@ -1076,7 +1200,24 @@ export class WorkerHarness {
 			options.thinkingLevel = this.config.thinkingLevel;
 		}
 
+		// The Worker model comes from the harness configuration, which the
+		// extension entrypoint populates from
+		// ~/.pi/agent/pi-local-worker-config.json. The flow is:
+		//
+		//   config file -> index.ts -> harness config -> createAgentSession(...)
+		//
+		// The harness deliberately does not read the configuration file itself.
+		// Keeping resolution at the extension boundary means a missing or invalid
+		// file is refused before the harness is ever entered, so no Worker session
+		// can be created from a configuration nobody validated, while the
+		// harness keeps its existing semantics for callers that supply a model
+		// directly.
 		if (this.config.provider && this.config.modelId) {
+			this.activeWorkerProvenance = {
+				provider: this.config.provider,
+				model: this.config.modelId,
+			};
+
 			const modelRuntime =
 				this.config.modelRuntime ??
 				(await ModelRuntime.create({
@@ -1127,7 +1268,24 @@ export class WorkerHarness {
 			// nothing was observed. Report that explicitly rather than leaving the
 			// field absent or implying an empty change set.
 			workspaceEvidence: this.noBaselineEvidence(),
+			...this.provenanceFields(),
 		};
+	}
+
+	/**
+	 * The `parent` / `worker` pair for the run in flight.
+	 *
+	 * Spread into every result so provenance is present on the success path and
+	 * on the early-error paths alike. A field is omitted rather than set to a
+	 * placeholder when nothing established it: an absent `worker` means no model
+	 * was ever resolved, which is exactly what a configuration failure looks
+	 * like.
+	 */
+	private provenanceFields(): Pick<WorkerResult, "parent" | "worker"> {
+		const fields: Pick<WorkerResult, "parent" | "worker"> = {};
+		if (this.activeParentProvenance) fields.parent = { ...this.activeParentProvenance };
+		if (this.activeWorkerProvenance) fields.worker = { ...this.activeWorkerProvenance };
+		return fields;
 	}
 
 	private buildWatchdogInfo(

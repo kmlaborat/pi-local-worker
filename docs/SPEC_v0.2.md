@@ -739,7 +739,8 @@ WorkerResult
 ├── workspaceEvidence
 ├── verification
 ├── gate
-└── orchestration
+├── orchestration
+└── provenance (parent / worker)
 ```
 
 Each answers a different question:
@@ -751,6 +752,13 @@ Each answers a different question:
 | Verification | Is there evidence the required conditions were met? |
 | Gate | How should that result be treated under policy? |
 | Orchestrator | What is the next lifecycle action? |
+| Provenance | Who asked, and which model did the work? |
+
+Provenance is descriptive and inert. It records the invoking session's model and
+the Worker's configured model (§17.2) and takes no part in any decision. It is
+present on the success path and on early-error paths alike, and is omitted rather
+than fabricated when nothing established it — an absent `worker` means no model
+was ever resolved, which is exactly what a configuration failure looks like.
 
 This separation is a core design principle of v0.2. These layers are not to be
 merged into a single "success detector".
@@ -899,6 +907,66 @@ is passed through as settings; model behaviour is owned by the endpoint.
 Worker implementation is model-agnostic. The extension depends on the session
 interface, not on any particular model's behaviour.
 
+### 17.1 Worker model source of truth
+
+The Worker's provider and model are configured, not inherited. The single source
+of truth is:
+
+```text
+~/.pi/agent/pi-local-worker-config.json
+
+{ "worker": { "provider": "<provider>", "model": "<model id>" } }
+```
+
+Both fields are required. The path is resolved with pi's own agent-directory
+resolution, which honours `PI_CODING_AGENT_DIR` and otherwise uses
+`~/.pi/agent`; the extension implements no home-directory logic of its own. The
+file is read at extension load, so a model change requires a restart or reload.
+
+Resolution flows in one direction:
+
+```text
+config file → extension entrypoint → harness configuration → createAgentSession
+```
+
+The extension entrypoint owns reading and validation. The harness receives
+resolved values and never opens the file. This keeps a missing or malformed
+configuration from ever producing a half-configured Worker.
+
+**A configuration failure creates no Worker session.** When the file is absent,
+unreadable, not valid JSON, or missing either field, `worker_run` returns an
+error result naming the file that was consulted, and no session is created. The
+Worker never falls back to the Architect's model or to a pi default, because a
+result produced that way would look like a run on the intended model when it was
+not. Extension loading itself is unaffected, so an absent configuration file
+cannot break pi startup for users who have not configured a Worker.
+
+Environment variables are not a configuration path for the Worker model.
+`PI_WORKER_PROVIDER` and `PI_WORKER_MODEL` are not read.
+
+### 17.2 Model provenance
+
+Every result records two independent model identities:
+
+```text
+parent = the model of the session that invoked worker_run
+worker = the model the Worker session was configured with
+```
+
+`parent` is read from the invoking session at the moment of the call. It is not
+configured, not persisted, and not cached across calls: two consecutive
+`worker_run` calls made after switching the Architect's model report different
+`parent` values. `worker` is the value resolved from the configuration file.
+
+Neither value influences the other. `parent` is provenance: it records who asked.
+It does not select, constrain, or validate what the Worker runs on. The two are
+expected to differ in production — typically the Architect on a larger model and
+the Worker on a coding-tuned one — and the specification treats them as
+orthogonal.
+
+When the harness is driven outside a pi session there is no parent to report, and
+`parent` is absent rather than guessed.
+
 ---
 
 ## 18. Error Semantics
@@ -1010,6 +1078,9 @@ All timing thresholds are configurable. None is a hidden constant.
 | patch cap | 256 KiB | Retained diff text bound. |
 | hash size cap | 2 MiB | Files above this are compared by size only. |
 | listed path cap | 200 | Pre-existing dirty/untracked paths listed. |
+
+Worker model configuration is not in this table by design: it lives in
+`~/.pi/agent/pi-local-worker-config.json` (§17.1), not in the environment.
 
 Gate policy is injectable through the harness API but is not exposed as an
 environment setting in the shipped extension; the shipped extension always uses

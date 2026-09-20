@@ -203,7 +203,10 @@ The result carries each layer as a sibling field:
                       "requireExecutionCompleted": true, "requireVerificationSatisfied": true } },
 
   "orchestration": { "action": "return", "status": "RETURNED",
-                     "reasonCode": "gate-accepted", "gateReasonCodes": ["accepted"] }
+                     "reasonCode": "gate-accepted", "gateReasonCodes": ["accepted"] },
+
+  "parent": { "provider": "mms1", "model": "Qwen3.8-27B:thinking" },
+  "worker": { "provider": "mms1", "model": "RINIQ-MERNIK:thinking-coding" }
 }
 ```
 
@@ -264,6 +267,56 @@ Architect → worker_run → Pi AgentSession → llama-swap / configured runtime
 
 ## Configuration
 
+### Worker model
+
+The Worker's provider and model come from one file:
+
+```text
+~/.pi/agent/pi-local-worker-config.json
+```
+
+```json
+{
+  "worker": {
+    "provider": "mms1",
+    "model": "RINIQ-MERNIK:thinking-coding"
+  }
+}
+```
+
+Both fields are required. The file is read at extension load, so changing the
+Worker model needs a pi restart or an extension reload.
+
+The path is resolved with pi's own agent-directory resolution, which honours
+`PI_CODING_AGENT_DIR` and otherwise uses `~/.pi/agent`. Relocate pi's
+configuration and this file moves with it.
+
+If the file is missing, unreadable, not valid JSON, or missing either field,
+`worker_run` returns an error naming the file that was consulted and **creates no
+Worker session**. A misconfigured Worker never runs on some other model and looks
+like it ran on the intended one. Extension loading itself is unaffected, so an
+absent config file cannot break pi startup.
+
+`PI_WORKER_PROVIDER` and `PI_WORKER_MODEL` are **no longer read**. The
+configuration file is the single source of truth.
+
+### Provenance
+
+Every result records which model asked and which model did the work:
+
+```json
+{
+  "parent": { "provider": "mms1", "model": "Qwen3.8-27B:thinking" },
+  "worker": { "provider": "mms1", "model": "RINIQ-MERNIK:thinking-coding" }
+}
+```
+
+`parent` is the invoking Architect session's model, read fresh at each
+`worker_run` call — never cached, never configured. `worker` is the model
+resolved from the configuration file. Neither influences the other.
+
+### Timing
+
 All timing thresholds are configurable. None is a hidden constant. Set any of
 these environment variables before starting pi; unset values use the shipped
 default.
@@ -271,8 +324,6 @@ default.
 | Environment variable | Default | Purpose |
 |---|---|---|
 | `PI_WORKER_CWD` | current dir | Working directory for Worker runs. |
-| `PI_WORKER_PROVIDER` | session default | Provider override for the Worker model. |
-| `PI_WORKER_MODEL` | session default | Model id override for the Worker. |
 | `PI_WORKER_THINKING` | session default | Thinking level: `off` `minimal` `low` `medium` `high` `xhigh` `max`. |
 | `PI_WORKER_WATCHDOG_INTERVAL_MS` | 5000 | How often the watchdog evaluates. |
 | `PI_WORKER_LLM_IDLE_MS` | 30000 | LLM silence before a probable stall. |
