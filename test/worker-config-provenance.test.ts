@@ -58,7 +58,7 @@ describe("worker-config — path resolution", () => {
 });
 
 describe("worker-config — valid configuration", () => {
-	const VALID = JSON.stringify({ worker: { provider: "mms1", model: "RINIQ-MERNIK:thinking-coding" } });
+	const VALID = JSON.stringify({ worker: { provider: "alpha", model: "worker-model" } });
 
 	test("1. a valid config is read", () => {
 		const r = loadFrom(VALID);
@@ -67,18 +67,18 @@ describe("worker-config — valid configuration", () => {
 
 	test("2. worker.provider is returned", () => {
 		const r = loadFrom(VALID);
-		expect((r.config as { provider: string }).provider).toBe("mms1");
+		expect((r.config as { provider: string }).provider).toBe("alpha");
 	});
 
 	test("3. worker.model is returned", () => {
 		const r = loadFrom(VALID);
-		expect((r.config as { model: string }).model).toBe("RINIQ-MERNIK:thinking-coding");
+		expect((r.config as { model: string }).model).toBe("worker-model");
 	});
 
 	test("surrounding whitespace is trimmed", () => {
-		const r = loadFrom(JSON.stringify({ worker: { provider: "  mms1  ", model: "  x  " } }));
+		const r = loadFrom(JSON.stringify({ worker: { provider: "  alpha  ", model: "  x  " } }));
 		expect(r.ok).toBe(true);
-		expect((r.config as { provider: string; model: string }).provider).toBe("mms1");
+		expect((r.config as { provider: string; model: string }).provider).toBe("alpha");
 		expect((r.config as { provider: string; model: string }).model).toBe("x");
 	});
 
@@ -105,7 +105,7 @@ describe("worker-config — failure modes", () => {
 	});
 
 	test("6. a missing `worker` object is an error", () => {
-		const r = loadFrom(JSON.stringify({ provider: "mms1", model: "x" }));
+		const r = loadFrom(JSON.stringify({ provider: "alpha", model: "x" }));
 		expect(r.ok).toBe(false);
 		expect(r.error).toContain('"worker"');
 	});
@@ -117,7 +117,7 @@ describe("worker-config — failure modes", () => {
 	});
 
 	test("7b. a missing model is an error", () => {
-		const r = loadFrom(JSON.stringify({ worker: { provider: "mms1" } }));
+		const r = loadFrom(JSON.stringify({ worker: { provider: "alpha" } }));
 		expect(r.ok).toBe(false);
 		expect(r.error).toContain("worker.model");
 	});
@@ -213,21 +213,21 @@ class FakeSession {
 
 describe("Worker model comes from configuration", () => {
 	test("8. the configured provider/model reach the Worker session options", async () => {
-		const { harness, captured } = harnessWith({ provider: "mms1", modelId: "RINIQ-MERNIK:thinking-coding" });
+		const { harness, captured } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		// A modelRuntime stub so no real catalog lookup happens.
 		const stubRuntime = { getModel: (p: string, m: string) => ({ provider: p, id: m }) };
 		(harness as any).config.modelRuntime = stubRuntime;
 
 		await harness.run(spec());
 		expect(captured.options[0]!.model).toEqual({
-			provider: "mms1",
-			id: "RINIQ-MERNIK:thinking-coding",
+			provider: "alpha",
+			id: "worker-model",
 		});
 	});
 
 	test("9. the Worker is not dragged onto the Architect's default model", async () => {
 		// The Worker model is set explicitly; nothing about the caller can change it.
-		const { harness, captured } = harnessWith({ provider: "mms1", modelId: "worker-model" });
+		const { harness, captured } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = {
 			getModel: (p: string, m: string) => ({ provider: p, id: m }),
 		};
@@ -235,21 +235,21 @@ describe("Worker model comes from configuration", () => {
 		await harness.run(
 			spec(),
 			undefined,
-			{ provider: "mms1", model: "Qwen3.8-27B:thinking" },
+			{ provider: "alpha", model: "parent-model" },
 		);
 		const model: any = captured.options[0]!.model;
 		expect(model.id).toBe("worker-model");
-		expect(model.id).not.toBe("Qwen3.8-27B:thinking");
+		expect(model.id).not.toBe("parent-model");
 	});
 
 	test("10. the result records the actual Worker provider/model", async () => {
-		const { harness } = harnessWith({ provider: "mms1", modelId: "RINIQ-MERNIK:thinking-coding" });
+		const { harness } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = {
 			getModel: (p: string, m: string) => ({ provider: p, id: m }),
 		};
 
 		const r = await harness.run(spec());
-		expect(r.worker).toEqual({ provider: "mms1", model: "RINIQ-MERNIK:thinking-coding" });
+		expect(r.worker).toEqual({ provider: "alpha", model: "worker-model" });
 	});
 });
 
@@ -259,31 +259,31 @@ describe("Worker model comes from configuration", () => {
 
 describe("Parent provenance", () => {
 	test("11. the invoking session's provider/model is recorded", async () => {
-		const { harness } = harnessWith({ provider: "mms1", modelId: "worker-model" });
+		const { harness } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = { getModel: (p: string, m: string) => ({ provider: p, id: m }) };
 
 		const r = await harness.run(spec(), undefined, {
-			provider: "mms1",
-			model: "Qwen3.8-27B:thinking",
+			provider: "alpha",
+			model: "parent-model",
 		});
-		expect(r.parent).toEqual({ provider: "mms1", model: "Qwen3.8-27B:thinking" });
+		expect(r.parent).toEqual({ provider: "alpha", model: "parent-model" });
 	});
 
 	test("12. parent and worker are independent", async () => {
-		const { harness } = harnessWith({ provider: "mms1", modelId: "RINIQ-MERNIK:thinking-coding" });
+		const { harness } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = { getModel: (p: string, m: string) => ({ provider: p, id: m }) };
 
 		const r = await harness.run(spec(), undefined, {
-			provider: "fedroa",
-			model: "Qwen3.8-27B:thinking",
+			provider: "beta",
+			model: "parent-model",
 		});
-		expect(r.parent).toEqual({ provider: "fedroa", model: "Qwen3.8-27B:thinking" });
-		expect(r.worker).toEqual({ provider: "mms1", model: "RINIQ-MERNIK:thinking-coding" });
+		expect(r.parent).toEqual({ provider: "beta", model: "parent-model" });
+		expect(r.worker).toEqual({ provider: "alpha", model: "worker-model" });
 		expect(r.parent!.model).not.toBe(r.worker!.model);
 	});
 
 	test("13. a changed Architect model is recorded per invocation", async () => {
-		const { harness } = harnessWith({ provider: "mms1", modelId: "worker-model" });
+		const { harness } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = { getModel: (p: string, m: string) => ({ provider: p, id: m }) };
 
 		const first = await harness.run(spec({ taskId: "a" }), undefined, {
@@ -302,41 +302,41 @@ describe("Parent provenance", () => {
 	});
 
 	test("14. the Worker model stays on the configured value across invocations", async () => {
-		const { harness, captured } = harnessWith({ provider: "mms1", modelId: "worker-model" });
+		const { harness, captured } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = { getModel: (p: string, m: string) => ({ provider: p, id: m }) };
 
 		const a = await harness.run(spec({ taskId: "a" }), undefined, { provider: "x", model: "y" });
 		const b = await harness.run(spec({ taskId: "b" }), undefined, { provider: "z", model: "w" });
 
-		expect(a.worker).toEqual({ provider: "mms1", model: "worker-model" });
-		expect(b.worker).toEqual({ provider: "mms1", model: "worker-model" });
+		expect(a.worker).toEqual({ provider: "alpha", model: "worker-model" });
+		expect(b.worker).toEqual({ provider: "alpha", model: "worker-model" });
 		const models = captured.options.map((o: any) => o.model.id);
 		expect(models).toEqual(["worker-model", "worker-model"]);
 	});
 
 	test("no parent supplied means no parent field", async () => {
-		const { harness } = harnessWith({ provider: "mms1", modelId: "worker-model" });
+		const { harness } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = { getModel: (p: string, m: string) => ({ provider: p, id: m }) };
 		const r = await harness.run(spec());
 		expect(r.parent).toBeUndefined();
-		expect(r.worker).toEqual({ provider: "mms1", model: "worker-model" });
+		expect(r.worker).toEqual({ provider: "alpha", model: "worker-model" });
 	});
 
-	test("the explicit production pairing: parent Qwen, worker RINIQ", async () => {
-		const { harness } = harnessWith({ provider: "mms1", modelId: "RINIQ-MERNIK:thinking-coding" });
+	test("parent and worker on the same provider are still recorded separately", async () => {
+		const { harness } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = { getModel: (p: string, m: string) => ({ provider: p, id: m }) };
 
 		const r = await harness.run(spec(), undefined, {
-			provider: "mms1",
-			model: "Qwen3.8-27B:thinking",
+			provider: "alpha",
+			model: "parent-model",
 		});
 
-		expect(r.parent).toEqual({ provider: "mms1", model: "Qwen3.8-27B:thinking" });
-		expect(r.worker).toEqual({ provider: "mms1", model: "RINIQ-MERNIK:thinking-coding" });
+		expect(r.parent).toEqual({ provider: "alpha", model: "parent-model" });
+		expect(r.worker).toEqual({ provider: "alpha", model: "worker-model" });
 	});
 
 	test("provenance does not leak into a later run that supplies no parent", async () => {
-		const { harness } = harnessWith({ provider: "mms1", modelId: "worker-model" });
+		const { harness } = harnessWith({ provider: "alpha", modelId: "worker-model" });
 		(harness as any).config.modelRuntime = { getModel: (p: string, m: string) => ({ provider: p, id: m }) };
 
 		await harness.run(spec({ taskId: "a" }), undefined, { provider: "p1", model: "m1" });
@@ -387,12 +387,12 @@ describe("Worker model resolution from a real config file", () => {
 		try {
 			fs.writeFileSync(
 				path.join(dir, WORKER_CONFIG_FILENAME),
-				JSON.stringify({ worker: { provider: "mms1", model: "RINIQ-MERNIK:thinking-coding" } }),
+				JSON.stringify({ worker: { provider: "alpha", model: "worker-model" } }),
 			);
 			const r = readWorkerConfig({ agentDir: dir });
 			expect(r.ok).toBe(true);
 			if (r.ok) {
-				expect(r.config).toEqual({ provider: "mms1", model: "RINIQ-MERNIK:thinking-coding" });
+				expect(r.config).toEqual({ provider: "alpha", model: "worker-model" });
 			}
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });

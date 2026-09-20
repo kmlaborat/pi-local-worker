@@ -1157,7 +1157,7 @@ export class WorkerHarness {
 	 * Worker started in a repository with a large instruction file would silently
 	 * receive instructions the Architect never delegated.
 	 *
-	 * Measured against a live endpoint (pi 0.85.1, Qwen3.8-27B): a 54 KB
+	 * Measured against a live local endpoint: a 54 KB
 	 * AGENTS.md in the Worker cwd raised the initial request from 2,161 to
 	 * 14,955 prompt tokens; `noContextFiles` returns it to 2,163, and adding
 	 * `noSkills` removes a further ~200. `noExtensions` does not suppress
