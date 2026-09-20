@@ -205,8 +205,8 @@ The result carries each layer as a sibling field:
   "orchestration": { "action": "return", "status": "RETURNED",
                      "reasonCode": "gate-accepted", "gateReasonCodes": ["accepted"] },
 
-  "parent": { "provider": "mms1", "model": "Qwen3.8-27B:thinking" },
-  "worker": { "provider": "mms1", "model": "RINIQ-MERNIK:thinking-coding" }
+  "parent": { "provider": "anthropic", "model": "claude-sonnet-4-5" },
+  "worker": { "provider": "llama.cpp", "model": "Qwen3.5-9B" }
 }
 ```
 
@@ -275,14 +275,31 @@ The Worker's provider and model come from one file:
 ~/.pi/agent/pi-local-worker-config.json
 ```
 
+Create it from the sample in this repository:
+
+```bash
+cp pi-local-worker-config.json.example ~/.pi/agent/pi-local-worker-config.json
+```
+
+The sample is a starting point, not a working default:
+
 ```json
 {
   "worker": {
-    "provider": "mms1",
-    "model": "RINIQ-MERNIK:thinking-coding"
+    "provider": "llama.cpp",
+    "model": "Qwen3.5-9B"
   }
 }
 ```
+
+**Change both values to match your own Pi environment.** `provider` is a **Pi
+provider ID**, not a server or binary name — the llama.cpp router binary is
+`llama-server`, but its Pi provider ID is `llama.cpp`. `model` must be a model
+id that provider resolves. Resolution is delegated entirely to Pi's
+`ModelRuntime`; this extension implements none of it and does not restrict the
+Worker to any particular provider. Models you declare yourself in
+`~/.pi/agent/models.json` work the same way — put that provider's ID in the
+config. Check what you have with pi's `/model` list.
 
 Both fields are required. The file is read at extension load, so changing the
 Worker model needs a pi restart or an extension reload.
@@ -306,8 +323,8 @@ Every result records which model asked and which model did the work:
 
 ```json
 {
-  "parent": { "provider": "mms1", "model": "Qwen3.8-27B:thinking" },
-  "worker": { "provider": "mms1", "model": "RINIQ-MERNIK:thinking-coding" }
+  "parent": { "provider": "anthropic", "model": "claude-sonnet-4-5" },
+  "worker": { "provider": "llama.cpp", "model": "Qwen3.5-9B" }
 }
 ```
 

@@ -1,0 +1,6 @@
+{
+  "worker": {
+    "provider": "llama.cpp",
+    "model": "Qwen3.5-9B"
+  }
+}

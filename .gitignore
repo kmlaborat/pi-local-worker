@@ -22,6 +22,13 @@ coverage/
 .env.*
 !.env.example
 
+# Local Worker configuration. The real file belongs in ~/.pi/agent/, but an
+# operator experimenting in the repo root must not commit it by accident: it is a
+# machine-local setting, not project configuration. The tracked template is named
+# with a .example suffix and stays tracked by the exact-name pattern below.
+pi-local-worker-config.json
+!pi-local-worker-config.json.example
+
 # OS metadata.
 .DS_Store
 Thumbs.db

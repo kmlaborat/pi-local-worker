@@ -923,6 +923,18 @@ resolution, which honours `PI_CODING_AGENT_DIR` and otherwise uses
 `~/.pi/agent`; the extension implements no home-directory logic of its own. The
 file is read at extension load, so a model change requires a restart or reload.
 
+The repository ships `pi-local-worker-config.json.example` as a template. It is
+a shape illustration with placeholder values, not a working default and not a
+built-in fallback: the operator copies it to the path above and edits both values
+for their own environment.
+
+`provider` is a **Pi provider ID**, not a server or binary name, and `model` is a
+model ID within that provider. Resolution is delegated entirely to pi's
+`ModelRuntime`: the extension implements no provider lookup, no model registry,
+and no provider restriction of its own. Any provider the operator's Pi can
+resolve is valid, including providers declared in `~/.pi/agent/models.json`. The
+Worker is not tied to llama.cpp or to any other specific provider.
+
 Resolution flows in one direction:
 
 ```text
