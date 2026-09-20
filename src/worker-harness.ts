@@ -1022,10 +1022,26 @@ export class WorkerHarness {
 	 *                                   resource-loader.ts), which is what gives
 	 *                                   us the native `tool_call` veto inside the
 	 *                                   Worker without recursive extension loading.
+	 * - `noContextFiles: true`     -> the Worker never inherits AGENTS.md or any
+	 *                                   other project instruction file.
+	 * - `noSkills: true`           -> the Worker never inherits skill listings.
 	 *
-	 * Project instruction files (AGENTS.md) and skills stay enabled: SPEC §9 allows
-	 * normal pi behaviour for project instructions, and the built-in coding tools
-	 * stay available because the Worker needs them.
+	 * The last two flags are the implementation of Worker context isolation: the
+	 * Worker acts on the TaskSpec and the execution environment it is explicitly
+	 * given, and on nothing else. Without them pi walks the cwd-to-root ancestor
+	 * chain and concatenates every AGENTS.md it finds into the system prompt, so a
+	 * Worker started in a repository with a large instruction file would silently
+	 * receive instructions the Architect never delegated.
+	 *
+	 * Measured against a live endpoint (pi 0.85.1, Qwen3.8-27B): a 54 KB
+	 * AGENTS.md in the Worker cwd raised the initial request from 2,161 to
+	 * 14,955 prompt tokens; `noContextFiles` returns it to 2,163, and adding
+	 * `noSkills` removes a further ~200. `noExtensions` does not suppress
+	 * skills -- the two flags are independent in the loader -- so `noSkills` is
+	 * required separately.
+	 *
+	 * The built-in coding tools (read, bash, edit, write) stay available: the
+	 * Worker needs them and their schemas are not an isolation problem.
 	 */
 	private async buildSessionOptions(
 		spec: TaskSpec,
@@ -1040,6 +1056,8 @@ export class WorkerHarness {
 			agentDir,
 			settingsManager,
 			noExtensions: true,
+			noContextFiles: true,
+			noSkills: true,
 			extensionFactories: [
 				{ name: "pi-local-worker-boundary", factory: createWorkBoundaryExtension(spec.workType, recorder) },
 			],
